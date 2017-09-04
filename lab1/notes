@@ -1,0 +1,7 @@
+single: < ~2000
+
+20-30% performance increase at inputs > 10000
+
+same output
+
+load balancing is average, some threads getting 1000 and some get 4000

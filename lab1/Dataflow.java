@@ -44,46 +44,63 @@ class Vertex {
 		use	= new BitSet();
 		def	= new BitSet();
 	}
+    
+    public synchronized BitSet getIn() {
+        return in;
+    }
+    
+    public synchronized void setListed(boolean status) {
+        listed = status;
+    }
+    
+    public synchronized boolean isListed() {
+        return listed;
+    }
 
 	void computeIn(LinkedList<Vertex> worklist)
 	{
-		int			i;
-		BitSet			old;
-		Vertex			v;
-		ListIterator<Vertex>	iter;
+		int                   i;
+		BitSet                old;
+		Vertex                v;
+		ListIterator<Vertex>  iter;
 
 		iter = succ.listIterator();
 
 		while (iter.hasNext()) {
 			v = iter.next();
-			//v.waitForProcessing();
-			synchronized(v) {
-				out.or(v.in);
+
+			synchronized(this) {
+				out.or(v.getIn());
 			}
 		}
+        
+        // in = use U (out - def)
 
-		old = in;
-		
-		in = new BitSet();
-		in.or(out);	
-		in.andNot(def);	
-		in.or(use);
+        synchronized(this) {
+            old = in;
+    		
+    		in = new BitSet();
+    		in.or(out);	
+    		in.andNot(def);	
+    		in.or(use);
+        }
+        
+        boolean different;
+        
+        synchronized(this) {
+            different = !in.equals(old);
+        }
 
-		// in = use U (out - def)
-
-		if (!in.equals(old)) {
+        if(different) {
 			iter = pred.listIterator();
 
 			while (iter.hasNext()) {
 				v = iter.next();
-				//v.updateWorklist();
-				//DO THIS IN V THREAD
-				synchronized(v) {
-					if (!v.listed) {
-						worklist.addLast(v);
-						v.listed = true;
-					}
-				}
+
+                if(!v.isListed()) {
+                    worklist.addLast(v);
+                    v.setListed(true);
+                }
 			}
 		}
 	}
@@ -118,37 +135,25 @@ class Vertex {
 }
 
 class WorkerThread extends Thread {
-	private int id;
+	private int id, processed;
 	private LinkedList<Vertex> worklist;
 	
-	WorkerThread(int id)
-	{
+	public WorkerThread(int id, LinkedList<Vertex> worklist) {
 		this.id = id;
-		this.worklist = null;
-	}
-	
-	public void addWorklist(LinkedList<Vertex> worklist) {
 		this.worklist = worklist;
 	}
 	
 	public void run() {
-	//	System.out.println("This is " + id);
-		
-		while (!worklist.isEmpty()) {
-	//	while(true) {
-		//	if(worklist.isEmpty()) {
-		//		continue;
-		//	}
+		while(!worklist.isEmpty()) {
+			Vertex u = worklist.remove();
 			
-			Vertex u;
-			
-			synchronized(this) {
-				u = worklist.remove();
-			}
-			
-			u.listed = false;
+			u.setListed(false);
 			u.computeIn(worklist);
+			
+			++processed;
 		}
+		
+		System.out.println("Thread " + id + " processed " + processed + " vertices");
 	}
 }
 
@@ -221,47 +226,22 @@ class Dataflow {
 
 		begin = System.nanoTime();
 		
+		if(vertex.length < 2000) {
+			nthreads = 1;
+		}
+		
 		for(i = 0; i != nthreads; ++i) {
-			worklist.addLast(new LinkedList<Vertex>());
+			worklist.add(new LinkedList<Vertex>());
 		}
 		
 		for(i = 0; i != vertex.length; ++i) {
 			worklist.get(i % nthreads).addLast(vertex[i]);
 		}
 		
-		/*
-		for (int j = 0; j != nthreads; ++j) {
-			worklist.add(new LinkedList<Vertex>());
-			
-		//	int first = j * work_per_thread;
-			//int last = (j + 1) * work_per_thread;
-			int last = (int)Math.round(division * (j + 1));
-			
-			if (j == nthreads - 1) {
-				last = vertex.length;
-			}
-			
-		//	System.out.println("Thread " + j + " gets index " + i + " to " + last);
-			
-			for (; i != last; ++i) {
-				worklist.get(j).addLast(vertex[i]);
-				vertex[i].listed = true;
-			}
-		}
-		*/
-		
 		WorkerThread[] workers = new WorkerThread[nthreads];
+        
 		for (int j = 0; j != nthreads; ++j) {
-			workers[j] = new WorkerThread(j);
-			
-			/*
-			for(i = 0; i != worklist.get(j).size(); ++i) {
-				worklist.get(j).get(i).setOwner(workers[j]);
-			}
-			*/
-			
-			workers[j].addWorklist(worklist.get(j));
-			
+			workers[j] = new WorkerThread(j, worklist.get(j));
 			workers[j].start();
 		}
 		
@@ -269,58 +249,13 @@ class Dataflow {
 			try {
 				workers[i].join();
 			} catch(InterruptedException exception) {
-				//HANDLE
 			}
 		}
-/*
-		for (i = 0; i < vertex.length; ++i) {
-			worklist.addLast(vertex[i]);
-			vertex[i].listed = true;
-		}
-		*/
-
-/*
-		while (!worklist.isEmpty()) {
-			u = worklist.remove();
-			u.listed = false;
-			u.computeIn(worklist);
-		}
-		*/
+        
 		end = System.nanoTime();
 
 		System.out.println("T = " + (end-begin)/1e9 + " s");
 	}
-	
-/*
-	public static void liveness(Vertex vertex[])
-	{
-		Vertex			u;
-		Vertex			v;
-		int			i;
-		LinkedList<Vertex>	worklist;
-		long			begin;
-		long			end;
-
-		System.out.println("computing liveness...");
-
-		begin = System.nanoTime();
-		worklist = new LinkedList<Vertex>();
-
-		for (i = 0; i < vertex.length; ++i) {
-			worklist.addLast(vertex[i]);
-			vertex[i].listed = true;
-		}
-
-		while (!worklist.isEmpty()) {
-			u = worklist.remove();
-			u.listed = false;
-			u.computeIn(worklist);
-		}
-		end = System.nanoTime();
-
-		System.out.println("T = " + (end-begin)/1e9 + " s");
-	}
-	*/
 
 	public static void main(String[] args)
 	{
