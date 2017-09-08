@@ -69,6 +69,12 @@ class Vertex(val index: Int, s: Int, val controller: Controller) extends Actor {
 
       case Go() => {
         // LAB 2: Start working with this vertex.
+        var old = in;
+        var i = 0;
+        
+        for(v <- succ) {
+        }
+        
         act();
       }
 
