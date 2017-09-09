@@ -111,6 +111,7 @@ class Vertex(val index: Int, s: Int, val controller: Controller) extends Actor {
         // LAB 2: Start working with this vertex.
         
         controller ! new Run
+        this ! new Compute
         //received = 0
         succ.foreach(v => v ! new RequestIn)
         
@@ -122,6 +123,7 @@ class Vertex(val index: Int, s: Int, val controller: Controller) extends Actor {
           
           act()
       }
+      
       /*
       case GoAgain() => {
           if(!listed) {
