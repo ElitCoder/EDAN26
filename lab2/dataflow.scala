@@ -1,19 +1,15 @@
 import scala.actors._
-import java.util.BitSet;
+import java.util.BitSet
 
-// LAB 2: some case classes but you need additional ones too.
+case class StartVertex()
+case class StopVertex();
+case class ComputeVertexAgain(newIn: BitSet)
+case class ComputeVertex()
 
-case class Start();
-case class Stop();
-case class Ready();
-case class Go();
-case class Change(in: BitSet);
-case class Run()
-case class StopAll()
-//case class Quit()
-case class RequestIn()
-case class Compute()
-case class GoAgain()
+case class VertexStarted()
+case class ControllerAddWork()
+case class ControllerFinishWork()
+case class ControllerComputeAgain(v: Vertex, in: BitSet)
 
 class Random(seed: Int) {
         var w = seed + 1;
@@ -30,53 +26,49 @@ class Random(seed: Int) {
 
 class Controller(val cfg: Array[Vertex]) extends Actor {
   var started = 0;
-  val begin   = System.currentTimeMillis();
-
-  // LAB 2: The controller must figure out when
-  //        to terminate all actors somehow.
-  
+  var begin: Long   = 0
   var computing = 0
 
   def act() {
     react {
-      case Ready() => {
+      case VertexStarted() => {
         started += 1;
-        //println("controller has seen " + started);
         if (started == cfg.length) {
+            begin = System.currentTimeMillis()
           for (u <- cfg)
-            u ! new Go;
+            u ! new ComputeVertex;
         }
         act();
       }
       
-      case Run() => {
+      case ControllerAddWork() => {
+          computing += 1
+                    
+          act()
+      }
+      
+      case ControllerComputeAgain(v: Vertex, in: BitSet) => {
           computing += 1
           
-          //printf("run: computed %d\n", computing)
+          v ! new ComputeVertexAgain(in)
           
           act()
       }
       
-      case Stop() => {
+      case ControllerFinishWork() => {
           computing -= 1
           
-          //printf("stop: computed %d\n", computing)
-          
           if(computing <= 0) {
-              cfg.foreach(v => v ! Stop())
-              //cfg.foreach(v => v.print)
+              cfg.foreach(v => v ! StopVertex())
+              cfg.foreach(v => v.print)
+              
+              printf("Time elapsed: %f s\n", (System.currentTimeMillis() - begin) / 1000.0f)
           }
           
           else {
               act()
           }
       }
-      
-      /*
-      case StopAll() => {
-          cfg.foreach(v => v ! Quit())
-      }
-      */
     }
   }
 }
@@ -88,94 +80,49 @@ class Vertex(val index: Int, s: Int, val controller: Controller) extends Actor {
   val defs               = new BitSet(s);
   var in                 = new BitSet(s);
   var out                = new BitSet(s);
-  //var working            = false
-  //var received           = 0
-  //var listed             = false
   
   def connect(that: Vertex)
   {
-    //println(this.index + "->" + that.index);
     this.succ = that :: this.succ;
     that.pred = this :: that.pred;
   }
-
+  
+  def compute(new_in: BitSet) {
+      out.or(new_in)
+      
+      val old = in
+      
+      in = new BitSet(s)
+      in.or(out)
+      in.andNot(defs)
+      in.or(uses)
+      
+      if(!in.equals(old)) {
+          pred.foreach(v => controller ! new ControllerComputeAgain(v, in))
+      }
+  }
+  
   def act() {
     react {
-      case Start() => {
-        controller ! new Ready;
-        //println("started " + index);
-        act();
-      }
-
-      case Go() => {
-        // LAB 2: Start working with this vertex.
-        
-        controller ! new Run
-        this ! new Compute
-        //received = 0
-        succ.foreach(v => v ! new RequestIn)
+      case StartVertex() => {
+        controller ! new VertexStarted;
         
         act();
       }
-      
-      case GoAgain() => {
-          this ! new Go()
-          
-          act()
-      }
-      
-      /*
-      case GoAgain() => {
-          if(!listed) {
-              this ! new Go
-          }
-          
-          else {
-              controller ! new Stop
-          }
-          
-          act()
-      }
-      */
 
-      case Stop()  => { }
-      
-      case RequestIn() => {
-          sender ! new Change(in)
-          
-          act()
+      case ComputeVertex() => {        
+        controller ! new ControllerAddWork
+        compute(new BitSet())  
+        controller ! new ControllerFinishWork
+        
+        act();
       }
+
+      case StopVertex()  => { }
       
-      case Change(in: BitSet) => {
-          out.or(in)
-          //received += 1
-          
-          //printf("%d: received %d\n", index, received)
-          
-          /*
-          if(received == succ.length) {
-              this ! new Compute
-          }
-          */
-          
-          this ! new Compute
-          
-          act()
-      }
-      
-      case Compute() => {
-          var old = in
-          
-          in = new BitSet()
-          in.or(out)
-          in.andNot(defs)
-          in.or(uses)
-          
-          if(!in.equals(old)) {
-              pred.foreach(v => v ! new GoAgain)
-          }
-          
-          controller ! new Stop
+      case ComputeVertexAgain(newIn: BitSet) => {
+          compute(newIn)
+          controller ! new ControllerFinishWork
           
           act()
       }
@@ -193,7 +140,9 @@ class Vertex(val index: Int, s: Int, val controller: Controller) extends Actor {
   def print = {
     printSet("use", index, uses);
     printSet("def", index, defs);
+    //println("");
     printSet("in", index, in);
+    printSet("out", index, out);
     println("");
   }
 }
@@ -241,7 +190,6 @@ object Driver {
     nvertex        = args(1).toInt;
     maxsucc        = args(2).toInt;
     nactive        = args(3).toInt;
-    val print      = args(4).toInt;
     val cfg        = new Array[Vertex](nvertex);
     val controller = new Controller(cfg);
 
@@ -261,10 +209,6 @@ object Driver {
       cfg(i).start;
 
     for (i <- 0 until nvertex)
-      cfg(i) ! new Start;
-
-    if (print != 0)
-      for (i <- 0 until nvertex)
-        cfg(i).print;
+      cfg(i) ! new StartVertex;
   }
 }

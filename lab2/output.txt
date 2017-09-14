@@ -1,0 +1,4 @@
+#scalac -g:vars -d classes dataflow.scala
+#scalac -deprecation -d classes dataflow.scala
+scalac -deprecation -optimise -d classes dataflow.scala
+makefile:8: receptet för målet ”all” misslyckades
