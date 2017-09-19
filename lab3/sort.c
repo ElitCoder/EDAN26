@@ -8,6 +8,14 @@
 #include <sys/time.h>
 #include <unistd.h>
 
+typedef struct {
+	void *base;
+	size_t n;
+	int threads_left;
+} thread_args_t;
+
+void par_sort(void*, size_t, int);
+
 static double sec(void)
 {
 	struct timeval now;
@@ -23,52 +31,79 @@ void swap(double *a, double *b)
     *b = t;
 }
 
-void par_sort(
-	void*		base,	// Array to sort.
-	size_t		n,	// Number of elements in base.
-	size_t		s,	// Size of each element.
-	int		(*cmp)(const void*, const void*)) // Behaves like strcmp
-{
-    if(n <= 1)
-        return;
-        
-    double *p = (double*)base;
-    
-    int k = n / 2;
-    swap(p, p + k);
-    
-    int key = *p;
-    int i = 1;
-    int j = n - 1;
-    
-    while(i <= j) {
-        while((i <= n - 1) && (p[i] <= key))
-            ++i;
-        while((j >= 0) && (p[j] > key))
-            ++j;
-            
-        if(i < j)
-            swap(p + i, p + j);
-    }
+int partition(double *a, int s) {
+	int p = a[s - 1];
+	int i = -1;
+	
+	for(int j = 0; j <= s - 2; j++) {
+		if(a[j] <= p) {
+			i++;
+			swap(&a[i], &a[j]);
+		}
+	}
+	
+	swap(&a[i + 1], &a[s - 1]);
+		
+	return i + 1;
 }
+
+void run_qsort(void *args)
+{
+	thread_args_t *t_arg = (thread_args_t*)args;
+	
+	par_sort(t_arg->base, t_arg->n, t_arg->threads_left);
+}
+
+void par_sort(void *base, size_t n, int threads_left)
+{
+	if(n <= 1)
+		return;
+		
+	double *a = (double*)base;
+	int j = partition(a, n);
+	
+	if(threads_left > 0) {		
+		thread_args_t t_arg;
+		
+		if(j > n - j) {
+			t_arg.base = base;
+			t_arg.n = j;
+			
+		} else {
+			t_arg.base = (((double*)base) + j + 1);
+			t_arg.n = n - j - 1;
+		}
+		
+		t_arg.threads_left = threads_left - 1;
+		
+		pthread_t thread;
+		pthread_create(&thread, NULL, (void*)run_qsort, &t_arg);
+		
+		if(j > n - j) {
+			par_sort(a + j + 1, n - j - 1, 0);
+		} else {
+			par_sort(a, j, 0);
+		}
+		
+		pthread_join(thread, NULL);
+	} else {
+		par_sort(a, j, 0);
+		par_sort(a + j + 1, n - j - 1, 0);
+	}
+}
+
 
 static int cmp(const void* ap, const void* bp)
 {	
-	/* you need to modify this function to compare doubles. */
     double a = *(double*)ap;
     double b = *(double*)bp;
     
-    if(a > b)
-        return -1;
-    else if(b > a)
-        return 1;
-
-	return 0; 
+	return a < b;
 }
 
 int main(int ac, char** av)
 {
-	int		n = 4;//2000000;
+	int		n = 40000000;
 	int		i;
 	double*		a;
 	double		start, end;
@@ -85,13 +120,13 @@ int main(int ac, char** av)
 	start = sec();
 
 #ifdef PARALLEL
-	par_sort(a, n, sizeof a[0], cmp);
+	printf("parallel\n");
+	par_sort(a, n, 128);
 #else
 	qsort(a, n, sizeof a[0], cmp);
 #endif
-
 	end = sec();
-
+	
 	printf("%1.2f s\n", end - start);
 
 	free(a);
