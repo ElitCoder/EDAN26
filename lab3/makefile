@@ -1,6 +1,7 @@
 CC      := gcc
 CFLAGS  := -Wall -Wextra
 CFLAGS  += -D PARALLEL
+CFLAGS  += -O3
 LD_LIBS := -lpthread
 
 all:	sort

@@ -65,7 +65,7 @@ void par_sort(void *base, size_t n, int threads_left)
 	if(threads_left > 0) {		
 		thread_args_t t_arg;
 		
-		if(j > n - j) {
+		if(j > (int)n - j) {
 			t_arg.base = base;
 			t_arg.n = j;
 			
@@ -79,7 +79,7 @@ void par_sort(void *base, size_t n, int threads_left)
 		pthread_t thread;
 		pthread_create(&thread, NULL, (void*)run_qsort, &t_arg);
 		
-		if(j > n - j) {
+		if(j > (int)n - j) {
 			par_sort(a + j + 1, n - j - 1, 0);
 		} else {
 			par_sort(a, j, 0);
@@ -92,7 +92,7 @@ void par_sort(void *base, size_t n, int threads_left)
 	}
 }
 
-
+/*
 static int cmp(const void* ap, const void* bp)
 {	
     double a = *(double*)ap;
@@ -100,10 +100,11 @@ static int cmp(const void* ap, const void* bp)
     
 	return a < b;
 }
+*/
 
 int main(int ac, char** av)
 {
-	int		n = 40000000;
+	int		n = 100000;
 	int		i;
 	double*		a;
 	double		start, end;
