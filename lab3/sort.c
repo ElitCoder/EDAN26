@@ -119,7 +119,12 @@ static int cmp(const void* ap, const void* bp)
     double a = *(double*)ap;
     double b = *(double*)bp;
     
-	return a > b;
+	if(a > b)
+		return 1;
+	else if(b > a)
+		return -1;
+	else
+		return 0;
 }
 
 int is_sorted(const double *a, int n)
