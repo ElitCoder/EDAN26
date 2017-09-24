@@ -9,8 +9,9 @@
 #include "list.h"
 #include "set.h"
 
-typedef struct vertex_t	vertex_t;
-typedef struct task_t	task_t;
+typedef struct vertex_t			vertex_t;
+typedef struct task_t			task_t;
+typedef struct liveness_args_t	liveness_args_t;
 
 /* cfg_t: a control flow graph. */
 struct cfg_t {
@@ -28,6 +29,16 @@ struct vertex_t {
 	vertex_t**		succ;		/* successor vertices 		*/
 	list_t*			pred;		/* predecessor vertices		*/
 	bool			listed;		/* on worklist			*/
+	pthread_mutex_t	mutex;		/* for parallelism */
+};
+
+/* liveness_args_t: args for parallel liveness */
+struct liveness_args_t {
+	cfg_t*				cfg;
+	size_t				id;
+	size_t				low;
+	size_t				high;
+	pthread_barrier_t*	barrier;
 };
 
 static void clean_vertex(vertex_t* v);
@@ -114,8 +125,124 @@ void setbit(cfg_t* cfg, size_t v, set_type_t type, size_t index)
 	set(cfg->vertex[v].set[type], index);
 }
 
+void* liveness_parallel(void *args)
+{
+	liveness_args_t*	arguments;
+	list_t*				worklist;
+	size_t				i;
+	vertex_t*			u;
+	set_t*				prev;
+	list_t*				p;
+	list_t*				h;
+	size_t				j;
+	vertex_t*			v;
+	bool				changed;
+	
+	arguments = (liveness_args_t*)args;
+	worklist = NULL;
+	
+	for(i = arguments->low; i < arguments->high; ++i) {
+		u = &arguments->cfg->vertex[i];
+		insert_last(&worklist, u);
+		
+		u->listed = true;
+		pthread_mutex_init(&u->mutex, NULL);
+	}
+	
+	pthread_barrier_wait(arguments->barrier);
+	
+	while((u = remove_first(&worklist)) != NULL) {
+		pthread_mutex_lock(&u->mutex);
+		
+		u->listed = false;
+
+		reset(u->set[OUT]);
+
+		for(j = 0; j < u->nsucc; ++j) {
+			if(u->succ[j] != u)
+				pthread_mutex_lock(&u->succ[j]->mutex);
+			
+			or(u->set[OUT], u->set[OUT], u->succ[j]->set[IN]);
+			
+			if(u->succ[j] != u)
+				pthread_mutex_unlock(&u->succ[j]->mutex);
+		}
+
+		prev = u->prev;
+		u->prev = u->set[IN];
+		u->set[IN] = prev;
+
+		propagate(u->set[IN], u->set[OUT], u->set[DEF], u->set[USE]);
+		
+		changed = u->pred != NULL && !equal(u->prev, u->set[IN]);
+
+		pthread_mutex_unlock(&u->mutex);
+
+		if(changed/*u->pred != NULL && !equal(u->prev, u->set[IN])*/) {
+			p = h = u->pred;
+			do {
+				v = p->data;
+				
+				pthread_mutex_lock(&v->mutex);
+				
+				if(!v->listed) {
+					v->listed = true;
+					insert_last(&worklist, v);
+				}
+				
+				pthread_mutex_unlock(&v->mutex);
+				
+				p = p->succ;
+
+			} while (p != h);
+		}
+	}
+	
+	return NULL;
+}
+
 void liveness(cfg_t* cfg)
 {
+	size_t nthreads = 4;
+	liveness_args_t args[nthreads];
+	pthread_t		threads[nthreads];
+	size_t i;
+	
+	pthread_barrier_t* barrier = malloc(sizeof(pthread_barrier_t));
+	pthread_barrier_init(barrier, NULL, nthreads);
+	
+	for(i = 0; i < nthreads; ++i) {
+		args[i].low = i * (cfg->nvertex / nthreads);
+		args[i].high = (i + 1) * (cfg->nvertex / nthreads);
+		
+		args[i].cfg = cfg;
+		args[i].id = i;
+		
+		args[i].barrier = barrier;
+		
+		pthread_create(&threads[i], NULL, liveness_parallel, &args[i]);
+	}
+	
+	for(i = 0; i < nthreads; ++i)
+		pthread_join(threads[i], NULL);
+	
+	/*
+	args.cfg = cfg;
+	args.id = 0;
+	args.low = 0;
+	args.high = cfg->nvertex;
+	args.barrier = barrier;
+	
+	pthread_t l_thread;
+	pthread_create(&l_thread, NULL, liveness_parallel, &args);
+	
+	pthread_join(l_thread, NULL);
+	*/
+	
+	pthread_barrier_destroy(barrier);
+	free(barrier);
+	
+	/*
 	vertex_t*	u;
 	vertex_t*	v;
 	set_t*		prev;
@@ -146,7 +273,6 @@ void liveness(cfg_t* cfg)
 		u->prev = u->set[IN];
 		u->set[IN] = prev;
 
-		/* in our case liveness information... */
 		propagate(u->set[IN], u->set[OUT], u->set[DEF], u->set[USE]);
 
 		if (u->pred != NULL && !equal(u->prev, u->set[IN])) {
@@ -163,6 +289,7 @@ void liveness(cfg_t* cfg)
 			} while (p != h);
 		}
 	}
+	*/
 }
 
 void print_sets(cfg_t* cfg, FILE *fp)
