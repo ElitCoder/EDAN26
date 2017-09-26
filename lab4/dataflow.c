@@ -30,12 +30,13 @@ struct vertex_t {
 	list_t*			pred;		/* predecessor vertices		*/
 	bool			listed;		/* on worklist			*/
 	pthread_mutex_t	mutex;		/* for parallelism */
+	pthread_mutex_t in_mutex;	/* avoid deadlock by only locking for in */
+	pthread_mutex_t listed_mutex/* avoid deadlock by only locking for changing listed */
 };
 
 /* liveness_args_t: args for parallel liveness */
 struct liveness_args_t {
 	cfg_t*				cfg;
-	size_t				id;
 	size_t				low;
 	size_t				high;
 	pthread_barrier_t*	barrier;
@@ -128,14 +129,14 @@ void setbit(cfg_t* cfg, size_t v, set_type_t type, size_t index)
 void* liveness_parallel(void *args)
 {
 	liveness_args_t*	arguments;
-	list_t*				worklist;
 	size_t				i;
-	vertex_t*			u;
-	set_t*				prev;
-	list_t*				p;
-	list_t*				h;
 	size_t				j;
+	set_t*				prev;
+	vertex_t*			u;
 	vertex_t*			v;
+	list_t*				worklist;
+	list_t*				h;
+	list_t*				p;
 	bool				changed;
 	
 	arguments = (liveness_args_t*)args;
@@ -146,7 +147,10 @@ void* liveness_parallel(void *args)
 		insert_last(&worklist, u);
 		
 		u->listed = true;
+		
 		pthread_mutex_init(&u->mutex, NULL);
+		pthread_mutex_init(&u->in_mutex, NULL);
+		pthread_mutex_init(&u->listed_mutex, NULL);
 	}
 	
 	pthread_barrier_wait(arguments->barrier);
@@ -154,48 +158,51 @@ void* liveness_parallel(void *args)
 	while((u = remove_first(&worklist)) != NULL) {
 		pthread_mutex_lock(&u->mutex);
 		
+		pthread_mutex_lock(&u->listed_mutex);
 		u->listed = false;
+		pthread_mutex_unlock(&u->listed_mutex);
 
 		reset(u->set[OUT]);
 
 		for(j = 0; j < u->nsucc; ++j) {
-			if(u->succ[j] != u)
-				pthread_mutex_lock(&u->succ[j]->mutex);
-			
+			pthread_mutex_lock(&u->succ[j]->in_mutex);
 			or(u->set[OUT], u->set[OUT], u->succ[j]->set[IN]);
-			
-			if(u->succ[j] != u)
-				pthread_mutex_unlock(&u->succ[j]->mutex);
+			pthread_mutex_unlock(&u->succ[j]->in_mutex);
 		}
 
 		prev = u->prev;
+		
+		pthread_mutex_lock(&u->in_mutex);
+		
 		u->prev = u->set[IN];
 		u->set[IN] = prev;
 
 		propagate(u->set[IN], u->set[OUT], u->set[DEF], u->set[USE]);
 		
 		changed = u->pred != NULL && !equal(u->prev, u->set[IN]);
+		
+		pthread_mutex_unlock(&u->in_mutex);
 
-		pthread_mutex_unlock(&u->mutex);
-
-		if(changed/*u->pred != NULL && !equal(u->prev, u->set[IN])*/) {
+		if(changed) {
 			p = h = u->pred;
 			do {
 				v = p->data;
 				
-				pthread_mutex_lock(&v->mutex);
+				pthread_mutex_lock(&v->listed_mutex);
 				
 				if(!v->listed) {
 					v->listed = true;
 					insert_last(&worklist, v);
 				}
 				
-				pthread_mutex_unlock(&v->mutex);
+				pthread_mutex_unlock(&v->listed_mutex);
 				
 				p = p->succ;
 
 			} while (p != h);
 		}
+		
+		pthread_mutex_unlock(&u->mutex);
 	}
 	
 	return NULL;
@@ -203,93 +210,30 @@ void* liveness_parallel(void *args)
 
 void liveness(cfg_t* cfg)
 {
-	size_t nthreads = 4;
-	liveness_args_t args[nthreads];
-	pthread_t		threads[nthreads];
-	size_t i;
+	size_t 				nthreads = 2;
+	size_t				i;
+	liveness_args_t 	args[nthreads];
+	pthread_t			threads[nthreads];
+	pthread_barrier_t	barrier;
 	
-	pthread_barrier_t* barrier = malloc(sizeof(pthread_barrier_t));
-	pthread_barrier_init(barrier, NULL, nthreads);
+	pthread_barrier_init(&barrier, NULL, nthreads);
 	
 	for(i = 0; i < nthreads; ++i) {
 		args[i].low = i * (cfg->nvertex / nthreads);
 		args[i].high = (i + 1) * (cfg->nvertex / nthreads);
 		
 		args[i].cfg = cfg;
-		args[i].id = i;
+		args[i].barrier = &barrier;
 		
-		args[i].barrier = barrier;
-		
+		printf("thread %zu gets vertex %zu to %zu\n", i, args[i].low, args[i].high);
+				
 		pthread_create(&threads[i], NULL, liveness_parallel, &args[i]);
 	}
 	
 	for(i = 0; i < nthreads; ++i)
 		pthread_join(threads[i], NULL);
-	
-	/*
-	args.cfg = cfg;
-	args.id = 0;
-	args.low = 0;
-	args.high = cfg->nvertex;
-	args.barrier = barrier;
-	
-	pthread_t l_thread;
-	pthread_create(&l_thread, NULL, liveness_parallel, &args);
-	
-	pthread_join(l_thread, NULL);
-	*/
-	
-	pthread_barrier_destroy(barrier);
-	free(barrier);
-	
-	/*
-	vertex_t*	u;
-	vertex_t*	v;
-	set_t*		prev;
-	size_t		i;
-	size_t		j;
-	list_t*		worklist;
-	list_t*		p;
-	list_t*		h;
-
-	worklist = NULL;
-
-	for (i = 0; i < cfg->nvertex; ++i) {
-		u = &cfg->vertex[i];
-
-		insert_last(&worklist, u);
-		u->listed = true;
-	}
-
-	while ((u = remove_first(&worklist)) != NULL) {
-		u->listed = false;
-
-		reset(u->set[OUT]);
-
-		for (j = 0; j < u->nsucc; ++j)
-			or(u->set[OUT], u->set[OUT], u->succ[j]->set[IN]);
-
-		prev = u->prev;
-		u->prev = u->set[IN];
-		u->set[IN] = prev;
-
-		propagate(u->set[IN], u->set[OUT], u->set[DEF], u->set[USE]);
-
-		if (u->pred != NULL && !equal(u->prev, u->set[IN])) {
-			p = h = u->pred;
-			do {
-				v = p->data;
-				if (!v->listed) {
-					v->listed = true;
-					insert_last(&worklist, v);
-				}
-
-				p = p->succ;
-
-			} while (p != h);
-		}
-	}
-	*/
+		
+	pthread_barrier_destroy(&barrier);
 }
 
 void print_sets(cfg_t* cfg, FILE *fp)
