@@ -1,0 +1,1 @@
+rm -f a.out && g++ -g -O3 -m64 -std=c++11 a.cc -lpthread && ./a.out

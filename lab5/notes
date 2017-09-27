@@ -1,0 +1,11 @@
+only done on intel
+
+kind of no difference when using atomic sum
+
+seq_cst is used when incrementing sum
+
+instructions for sum += f:
+  401c5c:	89 15 8e 16 20 00    	mov    %edx,0x20168e(%rip)        # 6032f0 <g_VAR>
+  401c62:	f0 48 01 05 96 16 20 	lock add %rax,0x201696(%rip)        # 603300 <_ZL3sum>
+  401c69:	00 
+  401c6a:	8b 05 80 16 20 00    	mov    0x201680(%rip),%eax        # 6032f0 <g_VAR>
