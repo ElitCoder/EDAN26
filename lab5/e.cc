@@ -35,7 +35,7 @@ public:
 	void lock() {
 		bool expect = false;
 		//while(m_flag.test_and_set(std::memory_order_acquire)) {
-		while(!m_flag.compare_exchange_weak(expect, true, std::memory_order_acq_rel, std::memory_order_consume))
+		while(!m_flag.compare_exchange_weak(expect, true, std::memory_order_acq_rel, std::memory_order_release))
 			expect = false;
 	}
 	
