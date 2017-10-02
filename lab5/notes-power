@@ -1,0 +1,14 @@
+a.cc with locks:
+2.20s
+
+b.cc with atomic:
+2.19s
+
+c.cc with spinlock:
+1.28s
+
+d.cc with sum.fetch:
+1.34s
+
+e.cc with compare_exchange:
+0.91s (acquire, relaxed) and relaxed
